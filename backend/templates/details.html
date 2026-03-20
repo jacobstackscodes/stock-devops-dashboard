@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>{{ ticker }} Stock Details</title>
+
+  <!-- Chart.js v4 -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- Date adapter for time scale -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+  <!-- Zoom / Pan plugin -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <style>
+    /* dark page wrapper override (works with your style.css) */
+    body { margin:0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body.dark { background:#111; color:#eee; }
+
+    header {
+      background: linear-gradient(135deg,#0d47a1,#1976d2);
+      color:#fff;
+      padding:14px 18px;
+      text-align:center;
+      position:relative;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    }
+    .back-btn {
+      position:absolute;
+      left:16px;
+      top:10px;
+      background:#1976d2;
+      color:#fff;
+      border:none;
+      padding:8px 14px;
+      border-radius:999px;
+      cursor:pointer;
+    }
+    .page-wrap { max-width:1200px; margin:20px auto; padding: 0 18px; }
+    .controls { display:flex; gap:10px; align-items:center; justify-content:center; margin:12px 0 18px; flex-wrap:wrap; }
+    .btn { background:#1976d2; color:#fff; border:none; padding:8px 12px; border-radius:16px; cursor:pointer; }
+    .btn.secondary { background:#222; color:#ddd; border:1px solid #333; }
+    .toggle { display:inline-flex; gap:8px; align-items:center; }
+    canvas { width:100% !important; height:420px !important; display:block; background:transparent; }
+    #volumeChart { height:200px !important; margin-top:18px; }
+    .legend-note { text-align:center; margin-top:8px; color:#bbb; font-size:0.9rem; }
+    /* controls dark look */
+    .controls .btn { box-shadow: 0 2px 6px rgba(0,0,0,0.5); }
+    .controls .btn.secondary { background: rgba(255,255,255,0.04); }
+  </style>
+</head>
+<body class="dark">
+  <header>
+    <button class="back-btn" onclick="location.href='/stocks'">⬅ Back</button>
+    <h1 id="title">{{ ticker }} Stock Details</h1>
+  </header>
+
+  <div class="page-wrap">
+    <div class="controls">
+      <div>
+        <button class="btn" data-range="1M">1M</button>
+        <button class="btn" data-range="3M">3M</button>
+        <button class="btn" data-range="6M">6M</button>
+        <button class="btn" data-range="1Y">1Y</button>
+        <button class="btn" data-range="ALL">ALL</button>
+      </div>
+
+      <div class="toggle" style="margin-left:12px;">
+        <label style="color:#ddd; margin-right:8px;">SMA:</label>
+        <button id="smaToggle" class="btn secondary">10-day</button>
+      </div>
+
+      <div style="margin-left:auto; color:#ccc; font-size:0.95rem;">
+        <span id="lastUpdated">Last updated: --</span>
+      </div>
+    </div>
+
+    <canvas id="priceChart"></canvas>
+    <canvas id="volumeChart"></canvas>
+
+    <div class="legend-note">Use mouse wheel or drag to zoom/pan (Ctrl for panning). Double-click chart to reset zoom.</div>
+  </div>
+
+<script>
+/* Chart initialization with tightened tooltip and tick formatting (no UI/theme changes) */
+(function(){
+  const params = new URLSearchParams(window.location.search);
+  const ticker = (params.get('ticker') || '{{ ticker }}' || 'AAPL').toUpperCase();
+  const defaultRange = 'ALL';
+  let currentRange = defaultRange;
+
+  const priceCanvas = document.getElementById('priceChart');
+  const volCanvas = document.getElementById('volumeChart');
+
+  let priceChart = null;
+  let volumeChart = null;
+
+  // small helper to format numbers with commas
+  function fmtNumber(v) {
+    if (v == null || Number.isNaN(Number(v))) return '';
+    try { return Number(v).toLocaleString(undefined, {maximumFractionDigits: 2}); } catch(e){ return String(v); }
+  }
+
+  // format date in a compact form for tooltip title
+  function fmtDateISO(d) {
+    try {
+      const dt = new Date(d);
+      // show month short + day: "Oct 29"
+      return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch(e) { return d; }
+  }
+
+  async function loadAndRender(range = 'ALL') {
+    currentRange = (range || 'ALL');
+    const url = `/api/stock_data?ticker=${encodeURIComponent(ticker)}&range=${encodeURIComponent(currentRange)}`;
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        console.error('stock_data fetch failed', resp.status, await resp.text());
+        return;
+      }
+      const data = await resp.json();
+      if (!Array.isArray(data) || data.length === 0) {
+        console.warn('No OHLC data returned for', ticker);
+        if (priceChart) { priceChart.data.datasets = []; priceChart.update(); }
+        if (volumeChart) { volumeChart.data.datasets = []; volumeChart.update(); }
+        return;
+      }
+
+      data.sort((a,b) => new Date(a.date) - new Date(b.date));
+
+      const closes = [];
+      const vols = [];
+      const sma10 = [];
+      const sma30 = [];
+
+      data.forEach(r => {
+        const dateStr = r.date;
+        const closeVal = (r.close == null) ? null : Number(r.close);
+        const volVal = (r.volume == null) ? 0 : Number(r.volume);
+
+        closes.push({ x: dateStr, y: (Number.isFinite(closeVal) ? closeVal : null) });
+        vols.push({ x: dateStr, y: (Number.isFinite(volVal) ? volVal : 0) });
+
+        if (r.SMA_10 !== undefined && r.SMA_10 !== null) {
+          sma10.push({ x: dateStr, y: Number.isFinite(Number(r.SMA_10)) ? Number(r.SMA_10) : null });
+        }
+        if (r.SMA_30 !== undefined && r.SMA_30 !== null) {
+          sma30.push({ x: dateStr, y: Number.isFinite(Number(r.SMA_30)) ? Number(r.SMA_30) : null });
+        }
+      });
+
+      const priceDatasets = [
+        {
+          label: `${ticker} Close`,
+          data: closes,
+          borderWidth: 2,
+          pointRadius: 2,
+          pointHoverRadius: 5,
+          tension: 0.12,
+          borderColor: '#4fc3f7',
+          backgroundColor: 'rgba(0,0,0,0)',
+          yAxisID: 'y'
+        }
+      ];
+
+      const hasSMA10 = sma10.some(pt => pt.y != null);
+      const hasSMA30 = sma30.some(pt => pt.y != null);
+      if (hasSMA10) {
+        priceDatasets.push({
+          label: 'SMA 10',
+          data: sma10,
+          borderWidth: 1.4,
+          pointRadius: 0,
+          borderDash: [4,4],
+          borderColor: '#ffd54f',
+          backgroundColor: 'rgba(0,0,0,0)',
+          yAxisID: 'y'
+        });
+      }
+      if (hasSMA30) {
+        priceDatasets.push({
+          label: 'SMA 30',
+          data: sma30,
+          borderWidth: 1.2,
+          pointRadius: 0,
+          borderDash: [6,4],
+          borderColor: '#ff8a65',
+          backgroundColor: 'rgba(0,0,0,0)',
+          yAxisID: 'y'
+        });
+      }
+
+      // Improved tooltip and ticks
+      const commonOptions = {
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: true, labels: { color: '#ddd', font: { size: 12 } } },
+          zoom: {
+            pan: { enabled: true, mode: 'x', modifierKey: 'ctrl' },
+            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+          },
+          tooltip: {
+            enabled: true,
+            mode: 'nearest',
+            intersect: false,
+            displayColors: true,
+            padding: 8,
+            cornerRadius: 6,
+            caretPadding: 6,
+            position: 'nearest',
+            titleFont: { size: 13, weight: '600' },
+            bodyFont: { size: 13 },
+            footerFont: { size: 12 },
+            // Set max width so tooltip doesn't become a very wide block
+            maxWidth: 360,
+            callbacks: {
+              title: function(items) {
+                if (!items || !items.length) return '';
+                // item.label is the x value (date) because we used {x,y}
+                return fmtDateISO(items[0].label);
+              },
+              label: function(ctx) {
+                const rawLabel = ctx.dataset && ctx.dataset.label ? ctx.dataset.label : '';
+                const v = ctx.parsed && ctx.parsed.y != null ? ctx.parsed.y : null;
+                if (v == null) return rawLabel;
+                // shorten 'AAPL Close' -> 'AAPL'
+                const shortLabel = rawLabel.replace(/\s+Close$/i, '');
+                // format number with commas and 2 decimals
+                return `${shortLabel}: $${fmtNumber(v)}`;
+              },
+              afterBody: function(items) {
+                // Add spacing or extra info if you want (kept minimal)
+                return '';
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            type: 'time',
+            time: { unit: 'day', tooltipFormat: 'yyyy-MM-dd' },
+            ticks: {
+              color: '#ccc',
+              maxRotation: 35,
+              minRotation: 0,
+              autoSkip: true,
+              maxTicksLimit: 14,
+              font: { size: 13 }
+            },
+            grid: { color: 'rgba(255,255,255,0.03)' }
+          },
+          y: {
+            position: 'left',
+            ticks: {
+              color: '#ccc',
+              font: { size: 13 },
+              callback: function(val) {
+                return fmtNumber(val); // formats with commas
+              }
+            },
+            grid: { color: 'rgba(255,255,255,0.03)' },
+            title: { display: true, text: 'Price' }
+          }
+        }
+      };
+
+      if (!priceChart) {
+        const ctx = priceCanvas.getContext('2d');
+        priceChart = new Chart(ctx, {
+          type: 'line',
+          data: { datasets: priceDatasets },
+          options: commonOptions
+        });
+      } else {
+        priceChart.data.datasets = priceDatasets;
+        priceChart.options = Object.assign({}, priceChart.options, commonOptions);
+        priceChart.update();
+      }
+
+      // Volume chart with formatted ticks
+      const volDataset = [{
+        label: 'Volume',
+        data: vols,
+        type: 'bar',
+        yAxisID: 'yVol',
+        backgroundColor: 'rgba(255,255,255,0.06)'
+      }];
+
+      const volOptions = {
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: {
+            type: 'time',
+            time: { unit: 'day' },
+            ticks: { color: '#ccc', font: { size: 12 }, maxRotation: 35, autoSkip: true, maxTicksLimit: 14 },
+            grid: { color: 'rgba(255,255,255,0.03)' }
+          },
+          yVol: {
+            position: 'left',
+            ticks: {
+              color: '#ccc',
+              font: { size: 12 },
+              callback: function(val) {
+                // format large numbers compactly (like 1,200,000 -> 1.2M)
+                try {
+                  const n = Number(val);
+                  if (Math.abs(n) >= 1_000_000) return (n/1_000_000).toFixed(1) + 'M';
+                  if (Math.abs(n) >= 1_000) return (n/1_000).toFixed(1) + 'K';
+                  return n.toString();
+                } catch(e) { return val; }
+              }
+            },
+            grid: { color: 'rgba(255,255,255,0.03)' },
+            title: { display: true, text: 'Volume' }
+          }
+        }
+      };
+
+      if (!volumeChart) {
+        const ctx2 = volCanvas.getContext('2d');
+        volumeChart = new Chart(ctx2, {
+          data: { datasets: volDataset },
+          options: volOptions
+        });
+      } else {
+        volumeChart.data.datasets = volDataset;
+        volumeChart.options = Object.assign({}, volumeChart.options, volOptions);
+        volumeChart.update();
+      }
+
+      const lastRow = data[data.length - 1];
+      if (lastRow && lastRow.date) {
+        const el = document.getElementById('lastUpdated');
+        if (el) el.textContent = 'Last updated: ' + lastRow.date;
+      }
+    } catch (err) {
+      console.error('Failed to load chart data', err);
+    }
+  }
+
+  // wire range buttons
+  document.querySelectorAll('.controls [data-range]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const r = btn.getAttribute('data-range');
+      loadAndRender(r);
+    });
+  });
+
+  loadAndRender(currentRange);
+})();
+</script>
+
+<!-- LSTM panel insertion script (keeps placement after volume chart) -->
+<script>
+(function() {
+  const params = new URLSearchParams(window.location.search);
+  const ticker = (params.get('ticker') || 'AAPL').toUpperCase();
+  const containerId = 'lstmForecastContainer';
+  if (document.getElementById(containerId)) return;
+
+  let insertAfter = document.getElementById('volumeChart');
+  if (!insertAfter) {
+    const canvases = Array.from(document.querySelectorAll('canvas'));
+    if (canvases.length) insertAfter = canvases[canvases.length - 1];
+  }
+  if (!insertAfter) insertAfter = document.body;
+
+  const wrap = document.createElement('section');
+  wrap.id = containerId;
+  wrap.style.maxWidth = '1100px';
+  wrap.style.margin = '28px auto';
+  wrap.style.padding = '12px 18px';
+  wrap.style.borderRadius = '10px';
+  wrap.style.background = 'rgba(255,255,255,0.02)';
+  wrap.style.color = 'var(--text-color, #ddd)';
+  wrap.style.fontFamily = 'Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial';
+  wrap.style.fontSize = '14px';
+  wrap.style.boxSizing = 'border-box';
+
+  const header = document.createElement('div');
+  header.style.display = 'flex';
+  header.style.alignItems = 'center';
+  header.style.justifyContent = 'space-between';
+  header.style.marginBottom = '10px';
+
+  const title = document.createElement('h3');
+  title.textContent = `${ticker} — LSTM Forecast`;
+  title.style.margin = '0';
+  title.style.fontSize = '18px';
+  title.style.color = 'var(--primary-text, #fff)';
+
+  const smallNote = document.createElement('small');
+  smallNote.textContent = 'Model: LSTM • Next 7 days';
+  smallNote.style.opacity = '0.85';
+  smallNote.style.fontSize = '12px';
+
+  header.appendChild(title);
+  header.appendChild(smallNote);
+  wrap.appendChild(header);
+
+  const summary = document.createElement('div');
+  summary.id = containerId + '-summary';
+  summary.textContent = 'Loading LSTM forecast...';
+  summary.style.marginBottom = '10px';
+  summary.style.fontWeight = '600';
+  wrap.appendChild(summary);
+
+  const tableWrapper = document.createElement('div');
+  tableWrapper.style.overflowX = 'auto';
+  tableWrapper.style.paddingTop = '6px';
+
+  const table = document.createElement('table');
+  table.style.width = '100%';
+  table.style.borderCollapse = 'collapse';
+  table.style.minWidth = '420px';
+  table.style.tableLayout = 'auto';
+
+  const thead = document.createElement('thead');
+  thead.innerHTML = `
+    <tr style="text-align:left; color:var(--muted-text, #bbb); font-size:13px;">
+      <th style="padding:8px 10px; opacity:0.9">Date</th>
+      <th style="padding:8px 10px; opacity:0.9">Predicted Close</th>
+      <th style="padding:8px 10px; opacity:0.9">Change (vs last)</th>
+    </tr>
+  `;
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  tbody.id = containerId + '-tbody';
+  table.appendChild(tbody);
+  tableWrapper.appendChild(table);
+  wrap.appendChild(tableWrapper);
+
+  const foot = document.createElement('div');
+  foot.style.marginTop = '8px';
+  foot.style.fontSize = '12px';
+  foot.style.opacity = '0.8';
+  foot.textContent = 'Note: Predictions are model outputs for demonstration only — not financial advice.';
+  wrap.appendChild(foot);
+
+  if (insertAfter && insertAfter.parentNode) insertAfter.parentNode.insertBefore(wrap, insertAfter.nextSibling);
+  else document.body.appendChild(wrap);
+
+  async function fetchAndRender(days = 7) {
+    const url = `/api/predictions?ticker=${encodeURIComponent(ticker)}&days=${days}`;
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        const txt = await resp.text();
+        summary.textContent = 'Forecast unavailable — server error.';
+        console.error('Predictions fetch failed:', resp.status, txt);
+        return;
+      }
+      const j = await resp.json();
+      if (!j || !Array.isArray(j.predictions)) {
+        summary.textContent = 'No prediction data returned.';
+        console.error('Unexpected prediction payload', j);
+        return;
+      }
+
+      let lastClose = null;
+      if (j.last_actual_close != null) {
+        lastClose = Number(j.last_actual_close);
+      } else if (Array.isArray(j.historical) && j.historical.length) {
+        lastClose = Number(j.historical[j.historical.length - 1].close);
+      } else if (j.predictions.length) {
+        lastClose = Number(j.predictions[0].pred_close);
+      }
+
+      tbody.innerHTML = '';
+
+      let sumPct = 0;
+      let count = 0;
+      let increases = 0, decreases = 0;
+      for (const p of j.predictions) {
+        const dt = p.date;
+        const pred = (p.pred_close == null) ? null : Number(p.pred_close);
+        const tr = document.createElement('tr');
+
+        const tdDate = document.createElement('td');
+        tdDate.style.padding = '8px 10px';
+        tdDate.style.whiteSpace = 'nowrap';
+        tdDate.textContent = dt;
+
+        const tdPred = document.createElement('td');
+        tdPred.style.padding = '8px 10px';
+        tdPred.style.fontWeight = '600';
+        tdPred.textContent = (pred == null) ? 'N/A' : '$' + Number(pred).toLocaleString(undefined, {maximumFractionDigits:2});
+
+        const tdCh = document.createElement('td');
+        tdCh.style.padding = '8px 10px';
+        if (pred == null || lastClose == null || lastClose === 0) {
+          tdCh.textContent = '—';
+        } else {
+          const pct = ((pred - lastClose) / lastClose) * 100;
+          tdCh.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+          tdCh.style.color = (pct >= 0) ? 'var(--positive, #7BE495)' : 'var(--negative, #FF6B6B)';
+          sumPct += pct;
+          count++;
+          if (pct >= 0) increases++; else decreases++;
+        }
+
+        tr.appendChild(tdDate);
+        tr.appendChild(tdPred);
+        tr.appendChild(tdCh);
+        tbody.appendChild(tr);
+      }
+
+      let summaryText = '';
+      if (count === 0) {
+        summaryText = 'No numeric predictions to summarise.';
+      } else {
+        const avgPct = sumPct / count;
+        let direction = 'stable';
+        if (avgPct > 0.3) direction = 'upward';
+        else if (avgPct < -0.3) direction = 'downward';
+        summaryText = `Model predicts a ${direction} short-term trend: ${avgPct >= 0 ? '+' : ''}${avgPct.toFixed(2)}% (avg change over ${count} days).`;
+        if (increases > decreases) summaryText += ` (${increases}/${count} days predicted ↑).`;
+        else if (decreases > increases) summaryText += ` (${decreases}/${count} days predicted ↓).`;
+      }
+
+      summary.textContent = summaryText;
+    } catch (err) {
+      console.error('Failed to fetch/render predictions', err);
+      summary.textContent = 'Failed to load LSTM forecast (check console).';
+    }
+  }
+
+  fetchAndRender(7);
+
+  const refreshBtn = document.createElement('button');
+  refreshBtn.textContent = 'Refresh Forecast';
+  refreshBtn.style.marginLeft = '12px';
+  refreshBtn.style.padding = '6px 10px';
+  refreshBtn.style.borderRadius = '8px';
+  refreshBtn.style.border = 'none';
+  refreshBtn.style.cursor = 'pointer';
+  refreshBtn.style.fontSize = '13px';
+  refreshBtn.onclick = () => {
+    summary.textContent = 'Refreshing...';
+    fetchAndRender(7);
+  };
+  header.appendChild(refreshBtn);
+
+})();
+</script>
+
+</body>
+</html>

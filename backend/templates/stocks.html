@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Popular Stocks</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="dark">
+  <header>
+  <div class="header-bar">
+    <button id="backBtn">← Back</button>
+    <h1>Popular Stocks</h1>
+    <input type="text" id="searchBar" placeholder="Search ticker...">
+  </div>
+</header>
+
+
+
+  <div id="stocks-container" class="stock-grid">
+    {% for ticker in ["AAPL","MSFT","GOOG","AMZN","TSLA","META","NFLX",
+                      "NVDA","AMD","INTC","IBM","ORCL","ADBE","CRM",
+                      "BABA","V","MA","PYPL","JPM","BAC"] %}
+    <div class="stock-card" data-ticker="{{ticker}}">
+      <strong>{{ticker}}</strong>
+      <div class="price" id="price-{{ticker}}">Loading...</div>
+      <button onclick="viewDetails('{{ticker}}')">View</button>
+    </div>
+    {% endfor %}
+  </div>
+
+<script>
+/*
+  Combined robust script:
+  - Ensures every "View" button navigates to /details?ticker=...
+  - Performs a single batched fetch to /api/prices?tickers=...
+  - Replaces "Loading..." text with $price or "N/A"
+  - Non-invasive: doesn't change layout or styling. Safe to paste once.
+*/
+
+(function() {
+  // --- Helpers ---
+  function normTicker(s) {
+    if (!s) return null;
+    return String(s).trim().toUpperCase();
+  }
+
+  // Try to find a ticker inside a card element
+  function findTickerInCard(cardEl) {
+    if (!cardEl) return null;
+    // 1) explicit data-ticker attribute
+    const dt = cardEl.querySelector('[data-ticker]');
+    if (dt && dt.getAttribute('data-ticker')) return normTicker(dt.getAttribute('data-ticker'));
+
+    // 2) element with class "ticker"
+    const cls = cardEl.querySelector('.ticker');
+    if (cls && cls.textContent) return normTicker(cls.textContent);
+
+    // 3) headings or bold text
+    const headings = cardEl.querySelectorAll('h1,h2,h3,h4,strong,b');
+    for (const h of headings) {
+      const t = (h.textContent || '').trim();
+      if (/^[A-Z]{1,6}$/.test(t)) return normTicker(t);
+    }
+
+    // 4) fallback: first uppercase token
+    const txt = (cardEl.textContent || '').trim();
+    const tokens = txt.split(/\s+/);
+    for (const tok of tokens) {
+      if (/^[A-Z]{1,6}$/.test(tok)) return normTicker(tok);
+    }
+    return null;
+  }
+
+  // Find the element inside a card that contains "Loading" (case-insensitive)
+  function findLoadingNode(cardEl) {
+    if (!cardEl) return null;
+    // prefer node that contains the word loading (visible text)
+    const nodes = cardEl.querySelectorAll('*');
+    for (const n of nodes) {
+      const txt = (n.textContent || '').trim().toLowerCase();
+      if (txt.includes('loading')) return n;
+    }
+    // fallback: the first small/label-like element
+    const small = cardEl.querySelector('small,span,label');
+    return small || null;
+  }
+
+  // Attach navigation to a view button (idempotent)
+  function attachNav(btn, ticker) {
+    if (!btn || !ticker) return;
+
+    // Avoid adding duplicate handlers: use a marker property
+    if (btn.__gotoAttached === ticker) return;
+    btn.__gotoAttached = ticker;
+
+    // Prevent form submission issues by intercepting click and navigating
+    btn.addEventListener('click', function(e) {
+      try {
+        e.preventDefault();
+      } catch (err) {}
+      // Build URL and navigate
+      const url = '/details?ticker=' + encodeURIComponent(ticker);
+      window.location.href = url;
+    });
+
+    // keyboard accessibility
+    btn.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        try { e.preventDefault(); } catch(n) {}
+        const url = '/details?ticker=' + encodeURIComponent(ticker);
+        window.location.href = url;
+      }
+    });
+
+    // make pointer cursor if safe
+    try { btn.style.cursor = 'pointer'; } catch (err) {}
+  }
+
+  // Find candidate cards (heuristic)
+  function discoverCards() {
+    const set = new Set();
+
+    // prefer cards that contain "View" buttons
+    document.querySelectorAll('button, a, input[type="button"], input[type="submit"]').forEach(el => {
+      const txt = ((el.textContent || el.value) || '').trim().toLowerCase();
+      if (txt === 'view') {
+        const card = el.closest('div') || el.parentElement || document.body;
+        if (card) set.add(card);
+      }
+    });
+
+    // also pick up elements with .ticker class
+    document.querySelectorAll('.ticker').forEach(el => {
+      const card = el.closest('div') || el.parentElement || document.body;
+      if (card) set.add(card);
+    });
+
+    return Array.from(set);
+  }
+
+  // Core: wire buttons + collect mapping for price update
+  function wireAndCollect() {
+    const cards = discoverCards();
+    const tickerToNodes = {}; // ticker -> array of loading nodes
+    const viewButtons = [];
+
+    cards.forEach(card => {
+      const ticker = findTickerInCard(card);
+      const loadingNode = findLoadingNode(card);
+      // gather loading nodes
+      if (ticker && loadingNode) {
+        tickerToNodes[ticker] = tickerToNodes[ticker] || [];
+        tickerToNodes[ticker].push(loadingNode);
+      }
+
+      // find View button(s) inside card and attach nav
+      const candidates = Array.from(card.querySelectorAll('button, a, input[type="button"], input[type="submit"]'));
+      candidates.forEach(c => {
+        const txt = ((c.textContent || c.value) || '').trim().toLowerCase();
+        if (txt === 'view') {
+          viewButtons.push({btn: c, ticker: ticker});
+        }
+      });
+    });
+
+    // Attach nav handlers
+    viewButtons.forEach(({btn, ticker}) => {
+      if (ticker) attachNav(btn, ticker);
+    });
+
+    return tickerToNodes;
+  }
+
+  // Batch-request prices via /api/prices
+  async function fetchBatchAndFill(map) {
+    const tickers = Object.keys(map);
+    if (!tickers.length) return;
+
+    // set interim "..." so user sees activity
+    tickers.forEach(t => map[t].forEach(n => n.textContent = '...'));
+
+    try {
+      const url = '/api/prices?tickers=' + encodeURIComponent(tickers.join(','));
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        // fill N/A for all
+        tickers.forEach(t => map[t].forEach(n => n.textContent = 'N/A'));
+        return;
+      }
+      const data = await resp.json();
+      tickers.forEach(t => {
+        const info = data[t];
+        if (!info) {
+          map[t].forEach(n => n.textContent = 'N/A');
+        } else if (typeof info.price === 'number') {
+          const txt = '$' + Number(info.price).toFixed(2);
+          map[t].forEach(n => n.textContent = txt);
+        } else {
+          // if an error field exists, show N/A and optionally log
+          map[t].forEach(n => n.textContent = 'N/A');
+          if (info.error) {
+            console.warn('Price error for', t, info);
+          }
+        }
+      });
+    } catch (err) {
+      console.warn('Batch price fetch failed', err);
+      tickers.forEach(t => map[t].forEach(n => n.textContent = 'N/A'));
+    }
+  }
+
+  // Run wiring + batch fetch; idempotent if called multiple times
+  async function runOnce() {
+    const map = wireAndCollect();
+    await fetchBatchAndFill(map);
+  }
+
+  // Run now
+  runOnce();
+
+  // Observe DOM changes and re-run (debounced) to handle dynamic content
+  let debounceTimer = null;
+  const mo = new MutationObserver(() => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      runOnce();
+      debounceTimer = null;
+    }, 150);
+  });
+  mo.observe(document.body, { childList: true, subtree: true });
+
+})();
+</script>
+
+
+</body>
+</html>

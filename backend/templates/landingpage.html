@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Stock Market Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #0d0d0d;
+      color: #f0f0f0;
+    }
+
+    header {
+      background: linear-gradient(90deg, #0d47a1, #1976d2);
+      padding: 1.5rem 2rem;
+      text-align: center;
+      color: #fff;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 2rem;
+      font-weight: 600;
+    }
+
+    .section {
+      max-width: 1100px;
+      margin: 4rem auto;
+      padding: 0 2rem;
+      text-align: center;
+    }
+
+    .section h2 {
+      color: #64b5f6;
+      margin-bottom: 1rem;
+      font-size: 2rem;
+    }
+
+    .section p {
+      font-size: 1.1rem;
+      line-height: 1.8;
+      color: #d0d0d0;
+    }
+
+    .cta-btn {
+      display: inline-block;
+      background: #1976d2;
+      color: #fff;
+      padding: 14px 30px;
+      border-radius: 50px;
+      font-size: 1.2rem;
+      margin-top: 2.5rem;
+      text-decoration: none;
+      transition: background 0.3s ease;
+    }
+
+    .cta-btn:hover {
+      background: #0d47a1;
+    }
+
+    @media (max-width: 768px) {
+      .section {
+        margin: 3rem 1rem;
+      }
+      header h1 {
+        font-size: 1.6rem;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>📈 Stock Market Dashboard</h1>
+  </header>
+
+  <div class="section">
+    <h2>Why Stocks?</h2>
+    <p>
+      Stocks represent ownership in companies. By buying a share, you become a part-owner of that company.
+      Over time, stocks can offer higher returns compared to traditional savings — helping you grow your wealth and build a secure financial future.
+    </p>
+  </div>
+
+  <div class="section">
+    <h2>Why Track the Market?</h2>
+    <p>
+      The stock market is dynamic and fast-changing. Tracking prices and volumes helps you make informed decisions,
+      identify trends early, and stay ahead of the market. Timing is everything when it comes to investing.
+    </p>
+  </div>
+
+  <div class="section">
+    <h2>Why This Dashboard?</h2>
+    <p>
+      Our platform provides real-time stock data with interactive charts and insights. It simplifies the market for you — 
+      whether you're a beginner or a seasoned investor. Get clarity, confidence, and control in one place.
+    </p>
+
+    <a href="{{ url_for('stocks_page') }}" class="cta-btn">Explore Stocks</a>
+  </div>
+
+</body>
+</html>
