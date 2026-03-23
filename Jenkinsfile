@@ -3,12 +3,6 @@ pipeline {
 
     stages {
 
-        stage('Clone Repository') {
-            steps {
-                git 'https://github.com/jacobstackscodes/stock-devops-dashboard.git'
-            }
-        }
-
         stage('Build Docker Images') {
             steps {
                 sh 'docker-compose build'
