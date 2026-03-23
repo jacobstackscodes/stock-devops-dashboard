@@ -1,0 +1,2 @@
+0 2 * * * python /app/worker/fetch_data.py >> /var/log/cron.log 2>&1
+10 2 * * * python /app/worker/update_prices.py >> /var/log/cron.log 2>&1

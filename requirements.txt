@@ -1,0 +1,10 @@
+flask
+mysql-connector-python
+pandas
+numpy
+yfinance
+tensorflow
+scikit-learn
+matplotlib
+mplfinance
+gunicorn
