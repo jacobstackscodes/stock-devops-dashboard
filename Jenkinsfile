@@ -9,8 +9,9 @@ pipeline {
             }
         }
 
-        stage('Start Containers') {
+        stage('Restart Application Containers') {
             steps {
+                sh 'docker-compose down || true'
                 sh 'docker-compose up -d'
             }
         }
