@@ -34,11 +34,8 @@ services:
     container_name: stock-nginx
     ports:
       - "8080:80"
-    volumes:
-      - nginx_conf:/etc/nginx/nginx.conf
     depends_on:
       - backend
 
 volumes:
   mysql_data:
-  nginx_conf:
