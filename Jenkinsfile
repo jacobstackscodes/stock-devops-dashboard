@@ -1,6 +1,7 @@
 pipeline {
 agent any
 
+
 environment {
     DOCKER_IMAGE = "jacobstackscodes/stock-devops-backend:latest"
 }
@@ -34,7 +35,7 @@ stages {
         steps {
             withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                 sh '''
-                echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-Hpmtg@5690
+                echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
                 docker push $DOCKER_IMAGE
                 docker logout
                 '''
@@ -44,7 +45,7 @@ stages {
 
     stage('Restart Application Containers') {
         steps {
-            sh 'docker compose down --remove-orphans'
+            sh 'docker compose down'
             sh 'docker compose up -d'
         }
     }
