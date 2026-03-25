@@ -1,7 +1,6 @@
 pipeline {
 agent any
 
-```
 environment {
     DOCKER_IMAGE = "jacobstackscodes/stock-devops-backend:latest"
 }
@@ -57,6 +56,5 @@ stages {
     }
 
 }
-```
 
 }
