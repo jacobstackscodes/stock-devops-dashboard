@@ -11,8 +11,8 @@ pipeline {
 
         stage('Restart Application Containers') {
             steps {
-                sh 'docker compose down || true'
-                sh 'docker compose up -d'
+                sh 'docker compose down --remove-orphans || true'
+                sh 'docker compose up -d --build'
             }
         }
 
