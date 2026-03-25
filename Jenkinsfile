@@ -1,6 +1,7 @@
 pipeline {
 agent any
 
+```
 environment {
     DOCKER_IMAGE = "jacobstackscodes/stock-devops-backend:latest"
 }
@@ -18,7 +19,8 @@ stages {
             sh '''
             docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:0.69.3 --timeout 15m image stock-devops-pipeline-backend
+            -v trivy-cache:/root/.cache/trivy \
+            aquasec/trivy:0.69.3 image stock-devops-pipeline-backend
             '''
         }
     }
@@ -33,7 +35,7 @@ stages {
         steps {
             withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                 sh '''
-                echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-Hpmtg@5690
+                echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
                 docker push $DOCKER_IMAGE
                 docker logout
                 '''
@@ -55,5 +57,6 @@ stages {
     }
 
 }
+```
 
 }
