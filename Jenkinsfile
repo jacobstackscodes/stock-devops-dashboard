@@ -1,6 +1,9 @@
 pipeline {
 agent any
 
+environment {
+    DOCKER_IMAGE = "jacobstackscodes/stock-devops-backend:latest"
+}
 
 stages {
 
@@ -20,6 +23,24 @@ stages {
         }
     }
 
+    stage('Tag Docker Image') {
+        steps {
+            sh 'docker tag stock-devops-pipeline-backend:latest $DOCKER_IMAGE'
+        }
+    }
+
+    stage('Push Image to DockerHub') {
+        steps {
+            withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                sh '''
+                echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                docker push $DOCKER_IMAGE
+                docker logout
+                '''
+            }
+        }
+    }
+
     stage('Restart Application Containers') {
         steps {
             sh 'docker compose down --remove-orphans'
@@ -34,6 +55,5 @@ stages {
     }
 
 }
-
 
 }
