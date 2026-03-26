@@ -1,11 +1,13 @@
+version: '3.8'
+
 services:
 
   mysql:
     image: mysql:8
     container_name: stock-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: stock_project
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
     volumes:
       - mysql_data:/var/lib/mysql
     ports:
@@ -34,6 +36,8 @@ services:
     container_name: stock-nginx
     ports:
       - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
     depends_on:
       - backend
 
