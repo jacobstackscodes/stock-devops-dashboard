@@ -1,12 +1,16 @@
 pipeline {
 agent any
-
-
 environment {
-    DOCKER_IMAGE = "jacobstackscodes/stock-devops-backend:latest"
+    DOCKER_IMAGE = "stock-devops-pipeline-backend:latest"
 }
 
 stages {
+
+    stage('Checkout SCM') {
+        steps {
+            git branch: 'main', url: 'https://github.com/jacobstackscodes/stock-devops-dashboard'
+        }
+    }
 
     stage('Build Docker Images') {
         steps {
@@ -19,33 +23,14 @@ stages {
             sh '''
             docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
-            -v trivy-cache:/root/.cache/trivy \
-            aquasec/trivy:0.69.3 image stock-devops-pipeline-backend
+            aquasec/trivy:0.53.0 image stock-devops-pipeline-backend
             '''
-        }
-    }
-
-    stage('Tag Docker Image') {
-        steps {
-            sh 'docker tag stock-devops-pipeline-backend:latest $DOCKER_IMAGE'
-        }
-    }
-
-    stage('Push Image to DockerHub') {
-        steps {
-            withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                sh '''
-                echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                docker push $DOCKER_IMAGE
-                docker logout
-                '''
-            }
         }
     }
 
     stage('Restart Application Containers') {
         steps {
-            sh 'docker compose down'
+            sh 'docker compose down || true'
             sh 'docker compose up -d'
         }
     }
