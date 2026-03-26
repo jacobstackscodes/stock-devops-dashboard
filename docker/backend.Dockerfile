@@ -5,12 +5,11 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Copy requirements first for caching
+# Copy requirements first (for Docker caching)
 
 COPY requirements.txt .
 
-RUN pip install --upgrade pip && 
-pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 
