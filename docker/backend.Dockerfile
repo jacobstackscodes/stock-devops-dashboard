@@ -5,16 +5,14 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Copy requirements first (for Docker caching)
+# Install dependencies first (better Docker caching)
 
 COPY requirements.txt .
-
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy only the backend code
 
 COPY backend/ ./backend
-COPY models/ ./models
 
 WORKDIR /app/backend
 
